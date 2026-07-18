@@ -168,7 +168,6 @@ def main():
     m2.metric("Factura N°", meta.get("numero_factura") or "—")
     m3.metric("Fecha", meta.get("fecha") or "—")
 
-    all_codigos = [item["codigo"] for item in inventory]
     codigo_label = {item["codigo"]: f'{item["nombre"]} — {item["codigo"]}' for item in inventory}
     sin_match_count = 0
 
@@ -187,20 +186,46 @@ def main():
         st.session_state.setdefault(precio_key, default_precio)
 
         with st.container(border=True):
-            top = st.columns([0.6, 2.6, 3, 1])
+            top = st.columns([0.6, 2.6, 3])
             top[0].checkbox("Excluir", key=excl_key)
             top[1].markdown(
                 f"**{row['descripcion']}**  \n"
                 f":gray[cod. proveedor: {row['codigo_proveedor'] or '—'}]"
             )
-            selected = top[2].selectbox(
-                "Producto en inventario",
-                options=[None] + all_codigos,
-                format_func=lambda c: "— sin coincidencia, buscar o dejar en blanco —" if c is None else codigo_label.get(c, c),
-                key=sel_key,
-                label_visibility="collapsed",
-            )
-            top[3].markdown(confidence_label(row, selected))
+            with top[2]:
+                query = st.text_input(
+                    "Buscar producto",
+                    key=rk("q", rid),
+                    placeholder="Escribe para buscar por nombre…",
+                    label_visibility="collapsed",
+                )
+                # Sin búsqueda: candidatos cercanos a la descripción de la factura.
+                # Con búsqueda: se limita a lo que escribió el cajero (no la lista completa).
+                if query.strip():
+                    found = matching.top_matches(query, inventory, idf, n=15)
+                else:
+                    found = matching.top_matches(row["descripcion"], inventory, idf, n=8)
+                options = [None] + [it["codigo"] for score, it in found if score > 0]
+
+                # El valor actual siempre debe seguir siendo una opción válida,
+                # aunque no aparezca entre los resultados de una búsqueda nueva.
+                current = st.session_state.get(sel_key)
+                if current is not None and current not in options:
+                    options.append(current)
+                if row["best_codigo"] and row["best_codigo"] not in options:
+                    options.append(row["best_codigo"])
+
+                selected = st.selectbox(
+                    "Producto en inventario",
+                    options=options,
+                    format_func=lambda c: "— sin coincidencia, dejar en blanco —" if c is None else codigo_label.get(c, c),
+                    key=sel_key,
+                    label_visibility="collapsed",
+                )
+                if query.strip() and len(options) == 1:
+                    st.caption("Sin resultados para esa búsqueda — puedes dejarlo en blanco.")
+                else:
+                    st.caption(confidence_label(row, selected))
             if selected is None:
                 sin_match_count += 1
 
