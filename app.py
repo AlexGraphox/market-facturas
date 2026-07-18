@@ -1,0 +1,258 @@
+import streamlit as st
+
+import claude_extract
+import matching
+import supa
+from utils import build_filename, csv_escape, fmt_num
+
+st.set_page_config(page_title="Facturas SM Market", page_icon="🧾", layout="wide")
+
+SEDES = ["Samaria", "Playa Dormida", "Two Towers"]
+
+
+def rk(prefix, row_id):
+    """Key de widget con el id de la corrida actual, para que una factura nueva
+    nunca herede valores editados de la factura anterior."""
+    return f"{prefix}_{st.session_state.batch_id}_{row_id}"
+
+
+def confidence_label(row, selected_codigo):
+    if selected_codigo is None:
+        return ":red[Sin producto]"
+    if selected_codigo == row["best_codigo"]:
+        score = row["best_score"]
+        if score >= 0.55:
+            return f":green[{round(score * 100)}% match]"
+        if score >= 0.28:
+            return f":orange[{round(score * 100)}% match]"
+        return f":red[{round(score * 100)}% match]"
+    return ":blue[Asignado a mano]"
+
+
+def alerts_for_row(costo, iva_pct, cantidad, valor_total, inv_item):
+    alerts = []
+    if inv_item:
+        costo_actual = inv_item["costo_actual"]
+        if costo_actual > 0:
+            delta = costo - costo_actual
+            if abs(delta) >= 1:
+                pct = (delta / costo_actual) * 100
+                sign = "+" if delta > 0 else ""
+                alerts.append(f"costo {sign}{pct:.1f}% vs inventario (${costo_actual:.2f})")
+        if abs(inv_item["iva"] - iva_pct) >= 0.5:
+            alerts.append(f"IVA factura {iva_pct}% ≠ inventario {inv_item['iva']}%")
+    if valor_total and valor_total > 0:
+        expected = cantidad * costo * (1 + iva_pct / 100)
+        if expected > valor_total * 1.01:
+            alerts.append(f"revisar total: esperado ${expected:.2f}, factura dice ${valor_total:.2f}")
+    return alerts
+
+
+def login_screen():
+    st.title("🧾 Facturas de proveedor — SM Market")
+    st.caption("Inicia sesión con tu correo autorizado.")
+    with st.form("login_form"):
+        email = st.text_input("Correo electrónico")
+        password = st.text_input("Clave", type="password")
+        submitted = st.form_submit_button("Entrar", type="primary")
+    if submitted:
+        try:
+            result = supa.sign_in(email.strip(), password)
+            st.session_state.auth = {"email": result.user.email}
+            st.rerun()
+        except Exception:
+            st.error("Correo o clave incorrectos, o el usuario todavía no existe.")
+
+
+def main():
+    if "auth" not in st.session_state:
+        st.session_state.auth = None
+    if not st.session_state.auth:
+        login_screen()
+        st.stop()
+
+    if "rows" not in st.session_state:
+        st.session_state.rows = []
+    if "invoice_meta" not in st.session_state:
+        st.session_state.invoice_meta = {}
+    if "batch_id" not in st.session_state:
+        st.session_state.batch_id = 0
+
+    with st.sidebar:
+        st.write(f"Sesión: **{st.session_state.auth['email']}**")
+        if st.button("Cerrar sesión"):
+            st.session_state.auth = None
+            st.rerun()
+
+    st.title("🧾 Facturas de proveedor — SM Market")
+
+    inventory = supa.load_inventory()
+    idf = matching.compute_idf(inventory)
+    inv_by_codigo = {item["codigo"]: item for item in inventory}
+    st.caption(f"Inventario: {len(inventory)} productos (sincronizado automáticamente desde OficinaPro).")
+
+    st.divider()
+    st.subheader("1. Factura del proveedor")
+    uploaded = st.file_uploader("Sube la factura en PDF o imagen", type=["pdf", "png", "jpg", "jpeg", "webp"])
+    extract_clicked = st.button("Extraer productos", type="primary", disabled=uploaded is None)
+
+    if extract_clicked and uploaded is not None:
+        with st.spinner("Leyendo la factura y extrayendo productos…"):
+            try:
+                parsed, raw = claude_extract.extract_invoice(uploaded.getvalue(), uploaded.type)
+            except Exception as e:
+                st.error(f"Error al conectar con el servicio de extracción: {e}")
+                parsed, raw = None, None
+
+        if parsed is None and raw is not None:
+            st.error(
+                "No se pudo interpretar la respuesta como JSON. Puede que la factura tenga demasiados "
+                "renglones o la imagen no sea legible. Respuesta recibida:\n\n" + raw[:500]
+            )
+        elif parsed is not None:
+            items = parsed.get("items") or []
+            if not items:
+                st.error("No se detectaron productos en la factura. Intenta con una imagen más nítida.")
+            else:
+                st.session_state.invoice_meta = {
+                    "proveedor": parsed.get("proveedor", ""),
+                    "numero_factura": parsed.get("numero_factura", ""),
+                    "fecha": parsed.get("fecha", ""),
+                }
+                st.session_state.batch_id += 1
+                rows = []
+                for i, it in enumerate(items):
+                    desc = it.get("descripcion") or it.get("codigo_proveedor") or ""
+                    matches = matching.top_matches(desc, inventory, idf, n=1)
+                    best_score, best_item = matches[0] if matches else (0.0, None)
+                    rows.append({
+                        "id": i,
+                        "descripcion": desc,
+                        "codigo_proveedor": it.get("codigo_proveedor", ""),
+                        "cantidad": float(it.get("cantidad") or 0),
+                        "costo": float(it.get("precio_unitario") or 0),
+                        "iva_pct": float(it.get("iva_pct") or 0),
+                        "valor_total": float(it.get("valor_total") or 0),
+                        "best_codigo": best_item["codigo"] if best_item and best_score > 0 else None,
+                        "best_score": best_score,
+                    })
+                st.session_state.rows = rows
+                st.success(f"{len(rows)} productos detectados.")
+
+    if not st.session_state.rows:
+        return
+
+    st.divider()
+    meta = st.session_state.invoice_meta
+    st.subheader("2. Revisa y confirma")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Proveedor", meta.get("proveedor") or "—")
+    m2.metric("Factura N°", meta.get("numero_factura") or "—")
+    m3.metric("Fecha", meta.get("fecha") or "—")
+
+    all_codigos = [item["codigo"] for item in inventory]
+    codigo_label = {item["codigo"]: f'{item["nombre"]} — {item["codigo"]}' for item in inventory}
+    sin_match_count = 0
+
+    for row in st.session_state.rows:
+        rid = row["id"]
+        excl_key, sel_key = rk("excl", rid), rk("sel", rid)
+        cant_key, costo_key = rk("cant", rid), rk("costo", rid)
+        iva_key, precio_key = rk("iva", rid), rk("precio", rid)
+
+        st.session_state.setdefault(excl_key, False)
+        st.session_state.setdefault(sel_key, row["best_codigo"])
+        st.session_state.setdefault(cant_key, row["cantidad"])
+        st.session_state.setdefault(costo_key, row["costo"])
+        st.session_state.setdefault(iva_key, row["iva_pct"])
+        default_precio = inv_by_codigo[row["best_codigo"]]["precio_venta"] if row["best_codigo"] in inv_by_codigo else 0.0
+        st.session_state.setdefault(precio_key, default_precio)
+
+        with st.container(border=True):
+            top = st.columns([0.6, 2.6, 3, 1])
+            top[0].checkbox("Excluir", key=excl_key)
+            top[1].markdown(
+                f"**{row['descripcion']}**  \n"
+                f":gray[cod. proveedor: {row['codigo_proveedor'] or '—'}]"
+            )
+            selected = top[2].selectbox(
+                "Producto en inventario",
+                options=[None] + all_codigos,
+                format_func=lambda c: "— sin coincidencia, buscar o dejar en blanco —" if c is None else codigo_label.get(c, c),
+                key=sel_key,
+                label_visibility="collapsed",
+            )
+            top[3].markdown(confidence_label(row, selected))
+            if selected is None:
+                sin_match_count += 1
+
+            bottom = st.columns(4)
+            cantidad = bottom[0].number_input("Cantidad", key=cant_key, step=1.0, format="%.2f")
+            costo = bottom[1].number_input("Costo unit.", key=costo_key, step=0.01, format="%.2f")
+            iva_pct = bottom[2].number_input("IVA %", key=iva_key, step=0.01, format="%.2f")
+            bottom[3].number_input("Precio venta", key=precio_key, step=0.01, format="%.2f")
+
+            inv_item = inv_by_codigo.get(selected)
+            alerts = alerts_for_row(costo, iva_pct, cantidad, row["valor_total"], inv_item)
+            if alerts:
+                st.caption("⚠️ " + " · ".join(alerts))
+
+    if sin_match_count:
+        st.warning(
+            f"{sin_match_count} línea(s) sin producto asignado. Se exportarán con el nombre de la factura "
+            "y sin código — al importar en OficinaPro deberás crear esos productos ahí."
+        )
+
+    st.divider()
+    st.subheader("3. Exportar")
+    sede = st.selectbox("Sede", [""] + SEDES)
+    incluidas = [r for r in st.session_state.rows if not st.session_state.get(rk("excl", r["id"]))]
+    st.caption(f"{len(incluidas)} de {len(st.session_state.rows)} líneas a exportar")
+
+    if st.button("Generar CSV para OficinaPro", type="primary", disabled=not sede):
+        lines = ["codigo unico,nombre,costo,iva %,cantidad,precio de venta"]
+        for row in incluidas:
+            rid = row["id"]
+            selected = st.session_state.get(rk("sel", rid))
+            cantidad = st.session_state.get(rk("cant", rid))
+            costo = st.session_state.get(rk("costo", rid))
+            iva_pct = st.session_state.get(rk("iva", rid))
+            precio_venta = st.session_state.get(rk("precio", rid))
+            if selected and selected in inv_by_codigo:
+                codigo_out, nombre_out = selected, inv_by_codigo[selected]["nombre"]
+            else:
+                codigo_out, nombre_out = "", row["descripcion"]
+            lines.append(",".join([
+                csv_escape(codigo_out),
+                csv_escape(nombre_out),
+                fmt_num(costo, 2),
+                fmt_num(iva_pct),
+                fmt_num(cantidad),
+                fmt_num(precio_venta, 2),
+            ]))
+        csv_text = "\n".join(lines)
+        filename = build_filename(meta, sede)
+
+        try:
+            supa.log_factura(
+                usuario_email=st.session_state.auth["email"],
+                proveedor=meta.get("proveedor", ""),
+                numero_factura=meta.get("numero_factura", ""),
+                fecha_factura=meta.get("fecha", ""),
+                sede=sede,
+                total_lineas=len(incluidas),
+                lineas_sin_match=sin_match_count,
+            )
+        except Exception as e:
+            st.warning(f"El CSV se generó, pero no se pudo guardar el registro de auditoría: {e}")
+
+        st.success(f"Archivo generado: {len(incluidas)} productos listos para importar.")
+        st.download_button(
+            "Descargar " + filename,
+            data=csv_text.encode("utf-8-sig"),
+            file_name=filename,
+            mime="text/csv",
+        )
+
+
+main()
