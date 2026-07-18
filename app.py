@@ -8,6 +8,7 @@ from utils import build_filename, csv_escape, fmt_num, parse_inventory_csv
 st.set_page_config(page_title="Facturas SM Market", page_icon="🧾", layout="wide")
 
 SEDES = ["Samaria", "Playa Dormida", "Two Towers"]
+MIN_SEARCH_CHARS = 5
 
 
 def rk(prefix, row_id):
@@ -210,26 +211,29 @@ def main():
                 query = st.text_input(
                     "Buscar producto",
                     key=rk("q", rid),
-                    placeholder="Escribe para buscar por nombre…",
+                    placeholder="Escribe al menos 5 letras para buscar…",
                     label_visibility="collapsed",
                 )
-                # Sin búsqueda: candidatos cercanos a la descripción de la factura.
-                # Con búsqueda: se limita a lo que escribió el cajero (no la lista completa).
-                if query.strip():
+                q_clean = query.strip()
+                searching = len(q_clean) >= MIN_SEARCH_CHARS
+                # Antes de 5 caracteres no se activa la búsqueda -- con muy
+                # pocas letras el resultado es ruido, no una lista útil (igual
+                # que en OficinaPro). Mientras tanto se muestran los candidatos
+                # más parecidos a la descripción de la factura.
+                if searching:
                     found = matching.top_matches(query, inventory, idf, n=15)
                 else:
                     found = matching.top_matches(row["descripcion"], inventory, idf, n=8)
                 options = [None] + [it["codigo"] for score, it in found if score > 0]
 
-                # Si el texto de búsqueda cambió desde el último render, se
-                # selecciona sola el mejor resultado nuevo -- si solo actualizara
-                # la lista sin mover la selección, quedaría elegido lo de antes
-                # aunque el cajero ya haya escrito la búsqueda correcta.
+                # Al completar una búsqueda (5+ caracteres) que cambió desde el
+                # último render, se selecciona sola el mejor resultado -- si solo
+                # actualizara la lista sin mover la selección, quedaría elegido
+                # lo de antes aunque el cajero ya haya escrito la búsqueda correcta.
                 last_query_key = rk("lastq", rid)
-                if st.session_state.get(last_query_key, "") != query:
-                    st.session_state[last_query_key] = query
-                    if found and found[0][0] > 0:
-                        st.session_state[sel_key] = found[0][1]["codigo"]
+                if searching and st.session_state.get(last_query_key, "") != query and found and found[0][0] > 0:
+                    st.session_state[sel_key] = found[0][1]["codigo"]
+                st.session_state[last_query_key] = query
 
                 # El valor actual siempre debe seguir siendo una opción válida,
                 # aunque no aparezca entre los resultados de una búsqueda nueva.
@@ -246,7 +250,9 @@ def main():
                     key=sel_key,
                     label_visibility="collapsed",
                 )
-                if query.strip() and len(options) == 1:
+                if q_clean and not searching:
+                    st.caption(f"Escribe {MIN_SEARCH_CHARS - len(q_clean)} letra(s) más para buscar…")
+                elif searching and len(options) == 1:
                     st.caption("Sin resultados para esa búsqueda — puedes dejarlo en blanco.")
                 else:
                     st.caption(confidence_label(row, selected))
@@ -334,7 +340,10 @@ def main():
         st.success(f"Archivo generado: {len(incluidas)} productos listos para importar.")
         st.download_button(
             "Descargar " + filename,
-            data=csv_text.encode("utf-8-sig"),
+            # utf-8 sin BOM: OficinaPro es estricto con el formato y un BOM al
+            # inicio le hacia descuadrar el conteo de columnas ("deben haber
+            # 6 columnas, error en fila 2").
+            data=csv_text.encode("utf-8"),
             file_name=filename,
             mime="text/csv",
         )
