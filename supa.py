@@ -26,9 +26,21 @@ def _service_client() -> Client:
 @st.cache_data(ttl=300)
 def load_inventory():
     table = st.secrets.get("INVENTORY_TABLE", DEFAULT_INVENTORY_TABLE)
-    res = _service_client().table(table).select("*").execute()
+    client = _service_client()
+    # Supabase solo devuelve 1000 filas por consulta si no se pagina.
+    page_size = 1000
+    start = 0
+    raw_rows = []
+    while True:
+        res = client.table(table).select("*").range(start, start + page_size - 1).execute()
+        batch = res.data or []
+        raw_rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        start += page_size
+
     inventory = []
-    for r in res.data or []:
+    for r in raw_rows:
         codigo = str(r.get("codigo") or "").strip()
         nombre = str(r.get("nombre") or "").strip()
         if not codigo or not nombre:
