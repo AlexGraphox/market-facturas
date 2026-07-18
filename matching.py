@@ -66,7 +66,13 @@ def top_matches(query, inventory, idf, n=5):
     q_norm = normalize(q_raw)
     q_tokens = tokenize(q_raw)
     q_digits = q_raw.replace(" ", "")
-    is_code_like = q_digits.isdigit() and len(q_digits) >= 4
+    is_digits = q_digits.isdigit()
+    # codigo interno es corto (6 digitos): un prefijo de 4 ya distingue bastante.
+    # codigo de barras es largo y los primeros digitos son el mismo prefijo de
+    # pais/fabricante para decenas de productos -- hace falta escribir mas
+    # (7+) antes de que un prefijo empiece a servir para algo.
+    codigo_prefix_ok = is_digits and len(q_digits) >= 4
+    barra_prefix_ok = is_digits and len(q_digits) >= 7
 
     tiered = []
     for item in inventory:
@@ -76,7 +82,7 @@ def top_matches(query, inventory, idf, n=5):
 
         if q_raw and (q_raw == codigo or q_raw == barra):
             tiered.append((0, 1.0, item))
-        elif is_code_like and (codigo.startswith(q_digits) or (barra and barra.startswith(q_digits))):
+        elif (codigo_prefix_ok and codigo.startswith(q_digits)) or (barra_prefix_ok and barra and barra.startswith(q_digits)):
             tiered.append((1, 1.0, item))
         elif q_norm and q_norm == nombre_norm:
             tiered.append((1, 1.0, item))
