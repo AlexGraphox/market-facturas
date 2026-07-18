@@ -221,6 +221,16 @@ def main():
                     found = matching.top_matches(row["descripcion"], inventory, idf, n=8)
                 options = [None] + [it["codigo"] for score, it in found if score > 0]
 
+                # Si el texto de búsqueda cambió desde el último render, se
+                # selecciona sola el mejor resultado nuevo -- si solo actualizara
+                # la lista sin mover la selección, quedaría elegido lo de antes
+                # aunque el cajero ya haya escrito la búsqueda correcta.
+                last_query_key = rk("lastq", rid)
+                if st.session_state.get(last_query_key, "") != query:
+                    st.session_state[last_query_key] = query
+                    if found and found[0][0] > 0:
+                        st.session_state[sel_key] = found[0][1]["codigo"]
+
                 # El valor actual siempre debe seguir siendo una opción válida,
                 # aunque no aparezca entre los resultados de una búsqueda nueva.
                 current = st.session_state.get(sel_key)
