@@ -36,8 +36,11 @@ create table if not exists public.inventario_precios (
     precio numeric not null default 0,
     iva numeric not null default 0,
     costo numeric not null default 0,
+    codigo_barra text,
     updated_at timestamptz not null default now()
 );
+
+create index if not exists idx_inventario_precios_barra on public.inventario_precios (codigo_barra);
 
 alter table public.inventario_precios enable row level security;
 

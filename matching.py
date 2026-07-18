@@ -57,8 +57,33 @@ def score_match(desc_tokens, inv_tokens, idf):
     return inter_w / union_w if union_w else 0.0
 
 
-def top_matches(desc, inventory, idf, n=5):
-    desc_tokens = tokenize(desc)
-    scored = [(score_match(desc_tokens, item["tokens"], idf), item) for item in inventory]
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return scored[:n]
+def top_matches(query, inventory, idf, n=5):
+    """Busca por código interno, código de barras o nombre (en ese orden de
+    prioridad) -- productos con el mismo nombre pero distinto código de
+    barras (variantes/gramajes) quedan agrupados por delante de coincidencias
+    solo parecidas, en vez de mezclados según el puntaje de texto libre."""
+    q_raw = (query or "").strip()
+    q_norm = normalize(q_raw)
+    q_tokens = tokenize(q_raw)
+    q_digits = q_raw.replace(" ", "")
+    is_code_like = q_digits.isdigit() and len(q_digits) >= 4
+
+    tiered = []
+    for item in inventory:
+        codigo = item.get("codigo") or ""
+        barra = item.get("codigo_barra") or ""
+        nombre_norm = normalize(item.get("nombre"))
+
+        if q_raw and (q_raw == codigo or q_raw == barra):
+            tiered.append((0, 1.0, item))
+        elif is_code_like and (codigo.startswith(q_digits) or (barra and barra.startswith(q_digits))):
+            tiered.append((1, 1.0, item))
+        elif q_norm and q_norm == nombre_norm:
+            tiered.append((1, 1.0, item))
+        else:
+            score = score_match(q_tokens, item["tokens"], idf)
+            if score > 0:
+                tiered.append((2, score, item))
+
+    tiered.sort(key=lambda t: (t[0], -t[1]))
+    return [(score, item) for _tier, score, item in tiered[:n]]

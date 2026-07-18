@@ -48,6 +48,7 @@ def parse_inventory_csv(file_bytes):
             "precio": parse_co_number(r.get("PRECIO")),
             "iva": parse_co_number(r.get("IVA")),
             "costo": parse_co_number(r.get("COSTO")),
+            "codigo_barra": (r.get("CODIGO DE BARRA") or "").strip(),
         })
     return rows
 

@@ -51,6 +51,7 @@ def load_inventory():
             "precio_venta": float(r.get("precio") or 0),
             "iva": float(r.get("iva") or 0),
             "costo_actual": float(r.get("costo") or 0),
+            "codigo_barra": str(r.get("codigo_barra") or "").strip(),
             "tokens": tokenize(nombre),
         })
     return inventory
