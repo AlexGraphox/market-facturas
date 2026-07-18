@@ -26,3 +26,22 @@ create policy "usuarios autenticados pueden leer el historial"
 on public.facturas_generadas for select
 to authenticated
 using (true);
+
+-- inventario_stock (la que ya sincroniza OficinaPro) solo trae stock, no
+-- precio/iva/costo. Esta tabla propia guarda esos 3 campos, poblada por
+-- upload manual del mismo CSV que ya exportas de OficinaPro.
+create table if not exists public.inventario_precios (
+    codigo text primary key,
+    nombre text not null,
+    precio numeric not null default 0,
+    iva numeric not null default 0,
+    costo numeric not null default 0,
+    updated_at timestamptz not null default now()
+);
+
+alter table public.inventario_precios enable row level security;
+
+create policy "usuarios autenticados pueden leer precios"
+on public.inventario_precios for select
+to authenticated
+using (true);

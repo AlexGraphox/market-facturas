@@ -3,15 +3,11 @@ from supabase import create_client, Client
 
 from matching import tokenize
 
-# Si los nombres de columna en Supabase no coinciden con estos, ajustar aquí
-# (no hace falta tocar el resto del código).
-INVENTORY_COLUMNS = {
-    "codigo": "codigo",
-    "nombre": "nombre",
-    "precio": "precio",
-    "iva": "iva",
-    "costo": "costo",
-}
+# inventario_stock (la tabla que ya sincroniza OficinaPro) solo trae stock,
+# no precio/iva/costo -- la API de OficinaPro que sí los tiene (new_products)
+# solo responde a IPs en lista blanca, esta app no puede llamarla directo.
+# Por eso el precio/iva/costo vive en esta tabla propia, poblada por upload manual.
+DEFAULT_INVENTORY_TABLE = "inventario_precios"
 
 
 def sign_in(email, password):
@@ -29,24 +25,34 @@ def _service_client() -> Client:
 
 @st.cache_data(ttl=300)
 def load_inventory():
-    table = st.secrets.get("INVENTORY_TABLE", "inventario_stock")
+    table = st.secrets.get("INVENTORY_TABLE", DEFAULT_INVENTORY_TABLE)
     res = _service_client().table(table).select("*").execute()
-    c = INVENTORY_COLUMNS
     inventory = []
     for r in res.data or []:
-        codigo = str(r.get(c["codigo"]) or "").strip()
-        nombre = str(r.get(c["nombre"]) or "").strip()
+        codigo = str(r.get("codigo") or "").strip()
+        nombre = str(r.get("nombre") or "").strip()
         if not codigo or not nombre:
             continue
         inventory.append({
             "codigo": codigo,
             "nombre": nombre,
-            "precio_venta": float(r.get(c["precio"]) or 0),
-            "iva": float(r.get(c["iva"]) or 0),
-            "costo_actual": float(r.get(c["costo"]) or 0),
+            "precio_venta": float(r.get("precio") or 0),
+            "iva": float(r.get("iva") or 0),
+            "costo_actual": float(r.get("costo") or 0),
             "tokens": tokenize(nombre),
         })
     return inventory
+
+
+def upsert_inventory_prices(rows):
+    if not rows:
+        return
+    table = st.secrets.get("INVENTORY_TABLE", DEFAULT_INVENTORY_TABLE)
+    client = _service_client()
+    batch = 500
+    for i in range(0, len(rows), batch):
+        client.table(table).upsert(rows[i:i + batch], on_conflict="codigo").execute()
+    load_inventory.clear()
 
 
 def log_factura(usuario_email, proveedor, numero_factura, fecha_factura, sede, total_lineas, lineas_sin_match):

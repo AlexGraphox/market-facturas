@@ -3,7 +3,7 @@ import streamlit as st
 import claude_extract
 import matching
 import supa
-from utils import build_filename, csv_escape, fmt_num
+from utils import build_filename, csv_escape, fmt_num, parse_inventory_csv
 
 st.set_page_config(page_title="Facturas SM Market", page_icon="🧾", layout="wide")
 
@@ -86,10 +86,28 @@ def main():
 
     st.title("🧾 Facturas de proveedor — SM Market")
 
+    with st.expander("Actualizar inventario compartido (precios y costos)"):
+        st.caption(
+            "Sube el mismo CSV que exportas de OficinaPro. Se actualiza para todos los usuarios — "
+            "solo hace falta subirlo cuando cambien precios o costos, no en cada factura."
+        )
+        inv_file = st.file_uploader("CSV de inventario", type=["csv"], key="inv_upload")
+        if st.button("Actualizar inventario", disabled=inv_file is None):
+            try:
+                rows = parse_inventory_csv(inv_file.getvalue())
+                if not rows:
+                    st.error("No se reconocieron columnas CODIGO/NOMBRE/PRECIO/IVA/COSTO en el archivo.")
+                else:
+                    supa.upsert_inventory_prices(rows)
+                    st.success(f"Inventario actualizado: {len(rows)} productos.")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Error leyendo el archivo: {e}")
+
     inventory = supa.load_inventory()
     idf = matching.compute_idf(inventory)
     inv_by_codigo = {item["codigo"]: item for item in inventory}
-    st.caption(f"Inventario: {len(inventory)} productos (sincronizado automáticamente desde OficinaPro).")
+    st.caption(f"Inventario: {len(inventory)} productos (actualízalo arriba si cambiaron precios/costos).")
 
     st.divider()
     st.subheader("1. Factura del proveedor")
