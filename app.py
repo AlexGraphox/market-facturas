@@ -77,6 +77,8 @@ def main():
         st.session_state.invoice_meta = {}
     if "batch_id" not in st.session_state:
         st.session_state.batch_id = 0
+    if "uploader_version" not in st.session_state:
+        st.session_state.uploader_version = 0
 
     with st.sidebar:
         st.write(f"Sesión: **{st.session_state.auth['email']}**")
@@ -111,7 +113,11 @@ def main():
 
     st.divider()
     st.subheader("1. Factura del proveedor")
-    uploaded = st.file_uploader("Sube la factura en PDF o imagen", type=["pdf", "png", "jpg", "jpeg", "webp"])
+    uploaded = st.file_uploader(
+        "Sube la factura en PDF o imagen",
+        type=["pdf", "png", "jpg", "jpeg", "webp"],
+        key=f"invoice_file_{st.session_state.uploader_version}",
+    )
     extract_clicked = st.button("Extraer productos", type="primary", disabled=uploaded is None)
 
     if extract_clicked and uploaded is not None:
@@ -162,7 +168,13 @@ def main():
 
     st.divider()
     meta = st.session_state.invoice_meta
-    st.subheader("2. Revisa y confirma")
+    header_col, reset_col = st.columns([5, 1])
+    header_col.subheader("2. Revisa y confirma")
+    if reset_col.button("↺ Nueva factura", help="Descarta esta factura y sube otra, sin salir de la sesión"):
+        st.session_state.rows = []
+        st.session_state.invoice_meta = {}
+        st.session_state.uploader_version += 1
+        st.rerun()
     m1, m2, m3 = st.columns(3)
     m1.metric("Proveedor", meta.get("proveedor") or "—")
     m2.metric("Factura N°", meta.get("numero_factura") or "—")
