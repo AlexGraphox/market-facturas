@@ -247,7 +247,8 @@ def main():
             cantidad = bottom[0].number_input("Cantidad", key=cant_key, step=1.0, format="%.2f")
             costo = bottom[1].number_input("Costo unit.", key=costo_key, step=0.01, format="%.2f")
             iva_pct = bottom[2].number_input("IVA %", key=iva_key, step=0.01, format="%.2f")
-            bottom[3].number_input("Precio venta (sin IVA)", key=precio_key, step=0.01, format="%.2f")
+            precio_venta = bottom[3].number_input("Precio venta (sin IVA)", key=precio_key, step=0.01, format="%.2f")
+            bottom[3].caption(f"Con IVA (así se exporta al CSV): **${precio_venta * (1 + iva_pct / 100):,.2f}**")
 
             subtotal = cantidad * costo
             subtotal_con_iva = subtotal * (1 + iva_pct / 100)
