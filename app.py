@@ -208,7 +208,7 @@ def main():
             cantidad = bottom[0].number_input("Cantidad", key=cant_key, step=1.0, format="%.2f")
             costo = bottom[1].number_input("Costo unit.", key=costo_key, step=0.01, format="%.2f")
             iva_pct = bottom[2].number_input("IVA %", key=iva_key, step=0.01, format="%.2f")
-            bottom[3].number_input("Precio venta", key=precio_key, step=0.01, format="%.2f")
+            bottom[3].number_input("Precio venta (sin IVA)", key=precio_key, step=0.01, format="%.2f")
 
             inv_item = inv_by_codigo.get(selected)
             alerts = alerts_for_row(costo, iva_pct, cantidad, row["valor_total"], inv_item)
@@ -240,13 +240,16 @@ def main():
                 codigo_out, nombre_out = selected, inv_by_codigo[selected]["nombre"]
             else:
                 codigo_out, nombre_out = "", row["descripcion"]
+            # OficinaPro espera "precio de venta" con IVA incluido; en pantalla se
+            # maneja sin IVA (igual que costo/margen), se le suma solo al exportar.
+            precio_con_iva = precio_venta * (1 + iva_pct / 100)
             lines.append(",".join([
                 csv_escape(codigo_out),
                 csv_escape(nombre_out),
                 fmt_num(costo, 2),
                 fmt_num(iva_pct),
                 fmt_num(cantidad),
-                fmt_num(precio_venta, 2),
+                fmt_num(precio_con_iva, 2),
             ]))
         csv_text = "\n".join(lines)
         filename = build_filename(meta, sede)
