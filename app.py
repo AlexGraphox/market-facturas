@@ -249,16 +249,19 @@ def main():
             iva_pct = bottom[2].number_input("IVA %", key=iva_key, step=0.01, format="%.2f")
             bottom[3].number_input("Precio venta (sin IVA)", key=precio_key, step=0.01, format="%.2f")
 
+            subtotal = cantidad * costo
+            subtotal_con_iva = subtotal * (1 + iva_pct / 100)
+            st.caption(f"Total línea: ${subtotal:,.2f} sin IVA  ·  ${subtotal_con_iva:,.2f} con IVA — compáralo con lo impreso en esta línea de la factura")
+
             inv_item = inv_by_codigo.get(selected)
             alerts = alerts_for_row(costo, iva_pct, cantidad, row["valor_total"], inv_item)
             if alerts:
                 st.caption("⚠️ " + " · ".join(alerts))
 
-        # Total de TODA la factura capturada (incluidas o no), para comparar contra
-        # lo impreso -- unos proveedores imprimen el total con IVA, otros sin IVA.
-        subtotal = cantidad * costo
+        # Acumulado de TODA la factura capturada (incluidas o no), para comparar
+        # contra lo impreso -- unos proveedores imprimen el total con IVA, otros sin IVA.
         total_sin_iva += subtotal
-        total_con_iva += subtotal * (1 + iva_pct / 100)
+        total_con_iva += subtotal_con_iva
 
     if sin_match_count:
         st.warning(
