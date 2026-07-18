@@ -182,6 +182,8 @@ def main():
 
     codigo_label = {item["codigo"]: f'{item["nombre"]} — {item["codigo"]}' for item in inventory}
     sin_match_count = 0
+    total_sin_iva = 0.0
+    total_con_iva = 0.0
 
     for row in st.session_state.rows:
         rid = row["id"]
@@ -252,11 +254,22 @@ def main():
             if alerts:
                 st.caption("⚠️ " + " · ".join(alerts))
 
+        # Total de TODA la factura capturada (incluidas o no), para comparar contra
+        # lo impreso -- unos proveedores imprimen el total con IVA, otros sin IVA.
+        subtotal = cantidad * costo
+        total_sin_iva += subtotal
+        total_con_iva += subtotal * (1 + iva_pct / 100)
+
     if sin_match_count:
         st.warning(
             f"{sin_match_count} línea(s) sin producto asignado. Se exportarán con el nombre de la factura "
             "y sin código — al importar en OficinaPro deberás crear esos productos ahí."
         )
+
+    tc1, tc2 = st.columns(2)
+    tc1.metric("Total factura (sin IVA)", f"${total_sin_iva:,.2f}")
+    tc2.metric("Total factura (con IVA)", f"${total_con_iva:,.2f}")
+    st.caption("Compara contra el total impreso en la factura del proveedor — según el proveedor, imprime uno u otro.")
 
     st.divider()
     st.subheader("3. Exportar")
