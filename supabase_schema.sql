@@ -69,3 +69,29 @@ on public.aprendizaje_matches for all
 to authenticated
 using (true)
 with check (true);
+
+-- Lista de correos con permiso para crearse su propia clave la primera vez
+-- que entren. Sin policies (RLS activo, cero policies) = solo la app con la
+-- service_role key puede leerla; nadie puede verla desde el navegador.
+-- Para agregar a alguien: insertar una fila aqui (Table Editor de Supabase).
+-- Para quitarle el acceso a alguien que YA tiene cuenta creada, esto no
+-- alcanza -- hay que eliminarlo en Authentication > Users.
+create table if not exists public.usuarios_autorizados (
+    email text primary key,
+    created_at timestamptz not null default now()
+);
+
+alter table public.usuarios_autorizados enable row level security;
+
+insert into public.usuarios_autorizados (email) values
+    ('mafestevez@gmail.com'),
+    ('deicymerino146@gmail.com'),
+    ('mutto30mutto@gmail.com'),
+    ('market2towers@gmail.com'),
+    ('maca.jaimes@gmail.com'),  -- REVISAR: llegó como "maca.jaim,es@gmail.com", corregido asumiendo typo
+    ('ana.troncoso.bastidas@gmail.com'),
+    ('amosquera2409@gmail.com'),
+    ('luismariovilladiegosandoval@gmail.com'),
+    ('alejandromartinezrizo2704@gmail.com'),
+    ('andrespipepes@gmail.com')
+on conflict (email) do nothing;

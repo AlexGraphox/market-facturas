@@ -23,6 +23,43 @@ def _service_client() -> Client:
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_SERVICE_ROLE_KEY"])
 
 
+def is_authorized_email(email):
+    email_norm = (email or "").strip().lower()
+    if not email_norm:
+        return False
+    res = _service_client().table("usuarios_autorizados").select("email").eq("email", email_norm).execute()
+    return bool(res.data)
+
+
+def auth_user_exists(email):
+    """No hay 'buscar por correo' directo en la API admin -- se lista y se filtra.
+    Con 7-10 usuarios esto es instantaneo; si la lista crece mucho tocaria revisar."""
+    email_norm = (email or "").strip().lower()
+    if not email_norm:
+        return False
+    page = 1
+    per_page = 200
+    while True:
+        users = _service_client().auth.admin.list_users(page=page, per_page=per_page)
+        if not users:
+            return False
+        for u in users:
+            if (u.email or "").strip().lower() == email_norm:
+                return True
+        if len(users) < per_page:
+            return False
+        page += 1
+
+
+def create_user_with_password(email, password):
+    email_norm = (email or "").strip().lower()
+    _service_client().auth.admin.create_user({
+        "email": email_norm,
+        "password": password,
+        "email_confirm": True,
+    })
+
+
 @st.cache_data(ttl=300)
 def load_inventory():
     table = st.secrets.get("INVENTORY_TABLE", DEFAULT_INVENTORY_TABLE)

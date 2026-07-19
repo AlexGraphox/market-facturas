@@ -49,20 +49,83 @@ def alerts_for_row(costo, iva_pct, cantidad, valor_total, inv_item):
     return alerts
 
 
+def _finish_login(email, password):
+    result = supa.sign_in(email, password)
+    st.session_state.auth = {"email": result.user.email}
+    st.session_state.pop("login_stage", None)
+    st.session_state.pop("login_email", None)
+    st.rerun()
+
+
 def login_screen():
     st.title("🧾 Facturas de proveedor — SM Market")
     st.caption("Inicia sesión con tu correo autorizado.")
-    with st.form("login_form"):
-        email = st.text_input("Correo electrónico")
-        password = st.text_input("Clave", type="password")
-        submitted = st.form_submit_button("Entrar", type="primary")
-    if submitted:
-        try:
-            result = supa.sign_in(email.strip(), password)
-            st.session_state.auth = {"email": result.user.email}
+    st.session_state.setdefault("login_stage", "email")
+
+    # Paso 1: pedir el correo primero (con boton, no reactivo por cada letra)
+    # para decidir si ya tiene cuenta, o si esta autorizado a crear una nueva.
+    if st.session_state.login_stage == "email":
+        with st.form("email_form"):
+            email = st.text_input("Correo electrónico")
+            submitted = st.form_submit_button("Continuar", type="primary")
+        if submitted:
+            email_clean = email.strip().lower()
+            if not email_clean:
+                st.error("Escribe tu correo.")
+            else:
+                st.session_state.login_email = email_clean
+                try:
+                    exists = supa.auth_user_exists(email_clean)
+                except Exception:
+                    exists = True  # no se pudo verificar -- se intenta el login normal igual
+                if exists:
+                    st.session_state.login_stage = "password"
+                elif supa.is_authorized_email(email_clean):
+                    st.session_state.login_stage = "create"
+                else:
+                    st.error("Este correo no está autorizado. Contacta a Alexander para que lo agregue.")
+                st.rerun()
+
+    # Paso 2a: ya tiene cuenta -- login normal.
+    elif st.session_state.login_stage == "password":
+        st.caption(f"Correo: **{st.session_state.login_email}**")
+        with st.form("password_form"):
+            password = st.text_input("Clave", type="password")
+            c1, c2 = st.columns(2)
+            submitted = c1.form_submit_button("Entrar", type="primary")
+            back = c2.form_submit_button("← Cambiar correo")
+        if back:
+            st.session_state.login_stage = "email"
             st.rerun()
-        except Exception:
-            st.error("Correo o clave incorrectos, o el usuario todavía no existe.")
+        if submitted:
+            try:
+                _finish_login(st.session_state.login_email, password)
+            except Exception:
+                st.error("Clave incorrecta.")
+
+    # Paso 2b: correo autorizado pero sin cuenta todavia -- crearla aqui mismo.
+    elif st.session_state.login_stage == "create":
+        st.caption(f"Correo: **{st.session_state.login_email}** — autorizado, todavía sin clave.")
+        with st.form("create_form"):
+            p1 = st.text_input("Crea una clave", type="password")
+            p2 = st.text_input("Repite la clave", type="password")
+            c1, c2 = st.columns(2)
+            submitted = c1.form_submit_button("Crear clave y entrar", type="primary")
+            back = c2.form_submit_button("← Cambiar correo")
+        if back:
+            st.session_state.login_stage = "email"
+            st.rerun()
+        if submitted:
+            if len(p1) < 6:
+                st.error("La clave debe tener al menos 6 caracteres.")
+            elif p1 != p2:
+                st.error("Las claves no coinciden.")
+            else:
+                try:
+                    supa.create_user_with_password(st.session_state.login_email, p1)
+                    _finish_login(st.session_state.login_email, p1)
+                except Exception as e:
+                    st.error(f"No se pudo crear la cuenta: {e}")
 
 
 def main():
