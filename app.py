@@ -145,24 +145,39 @@ def main():
                     "fecha": parsed.get("fecha", ""),
                 }
                 st.session_state.batch_id += 1
+                learned = supa.get_learned_matches(parsed.get("proveedor", ""))
+                learned_count = 0
                 rows = []
                 for i, it in enumerate(items):
                     desc = it.get("descripcion") or it.get("codigo_proveedor") or ""
-                    matches = matching.top_matches(desc, inventory, idf, n=1)
-                    best_score, best_item = matches[0] if matches else (0.0, None)
+                    codigo_proveedor = it.get("codigo_proveedor", "")
+                    learned_codigo = learned.get(matching.normalize(codigo_proveedor))
+                    if learned_codigo and learned_codigo in inv_by_codigo:
+                        # Ya se habia corregido a mano este producto de este
+                        # proveedor antes -- se usa esa eleccion directo, con
+                        # confianza maxima, en vez de adivinar de nuevo por texto.
+                        best_codigo, best_score = learned_codigo, 1.0
+                        learned_count += 1
+                    else:
+                        matches = matching.top_matches(desc, inventory, idf, n=1)
+                        best_score, best_item = matches[0] if matches else (0.0, None)
+                        best_codigo = best_item["codigo"] if best_item and best_score > 0 else None
                     rows.append({
                         "id": i,
                         "descripcion": desc,
-                        "codigo_proveedor": it.get("codigo_proveedor", ""),
+                        "codigo_proveedor": codigo_proveedor,
                         "cantidad": float(it.get("cantidad") or 0),
                         "costo": float(it.get("precio_unitario") or 0),
                         "iva_pct": float(it.get("iva_pct") or 0),
                         "valor_total": float(it.get("valor_total") or 0),
-                        "best_codigo": best_item["codigo"] if best_item and best_score > 0 else None,
+                        "best_codigo": best_codigo,
                         "best_score": best_score,
                     })
                 st.session_state.rows = rows
-                st.success(f"{len(rows)} productos detectados.")
+                msg = f"{len(rows)} productos detectados."
+                if learned_count:
+                    msg += f" {learned_count} ya se reconocieron de facturas anteriores de este proveedor."
+                st.success(msg)
 
     if not st.session_state.rows:
         return
@@ -259,6 +274,16 @@ def main():
             if selected is None:
                 sin_match_count += 1
 
+            # Si el producto elegido cambió (a mano o por búsqueda), el precio
+            # de venta debe seguir al producto nuevo -- si no, se queda pegado
+            # al precio del primer producto que había, aunque ya no sea el
+            # correcto, y ese precio equivocado termina subiéndose a OficinaPro.
+            last_selected_key = rk("lastsel", rid)
+            if st.session_state.get(last_selected_key, "__unset__") != selected:
+                st.session_state[last_selected_key] = selected
+                if selected and selected in inv_by_codigo:
+                    st.session_state[precio_key] = inv_by_codigo[selected]["precio_venta"]
+
             bottom = st.columns(4)
             cantidad = bottom[0].number_input("Cantidad", key=cant_key, step=1.0, format="%.2f")
             costo = bottom[1].number_input("Costo unit.", key=costo_key, step=0.01, format="%.2f")
@@ -299,6 +324,7 @@ def main():
 
     if st.button("Generar CSV para OficinaPro", type="primary", disabled=not sede):
         lines = ["codigo unico,nombre,costo,iva %,cantidad,precio de venta"]
+        learn_entries = []
         for row in incluidas:
             rid = row["id"]
             selected = st.session_state.get(rk("sel", rid))
@@ -310,6 +336,10 @@ def main():
                 codigo_out, nombre_out = selected, inv_by_codigo[selected]["nombre"]
             else:
                 codigo_out, nombre_out = "", row["descripcion"]
+            # Se corrigio a mano respecto a lo que sugirio la IA -- se guarda
+            # para reconocerlo solo la proxima vez que llegue este proveedor.
+            if selected != row["best_codigo"] and selected and row["codigo_proveedor"]:
+                learn_entries.append((row["codigo_proveedor"], selected))
             # OficinaPro espera "precio de venta" con IVA incluido; en pantalla se
             # maneja sin IVA (igual que costo/margen), se le suma solo al exportar.
             precio_con_iva = precio_venta * (1 + iva_pct / 100)
@@ -336,6 +366,13 @@ def main():
             )
         except Exception as e:
             st.warning(f"El CSV se generó, pero no se pudo guardar el registro de auditoría: {e}")
+
+        if learn_entries:
+            try:
+                supa.save_learned_matches(meta.get("proveedor", ""), st.session_state.auth["email"], learn_entries)
+                st.caption(f"Se aprendieron {len(learn_entries)} corrección(es) para reconocer mejor la próxima factura de este proveedor.")
+            except Exception:
+                pass
 
         st.success(f"Archivo generado: {len(incluidas)} productos listos para importar.")
         st.download_button(

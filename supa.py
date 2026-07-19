@@ -1,7 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 
-from matching import tokenize
+from matching import normalize, tokenize
 
 # inventario_stock (la tabla que ya sincroniza OficinaPro) solo trae stock,
 # no precio/iva/costo -- la API de OficinaPro que sí los tiene (new_products)
@@ -66,6 +66,42 @@ def upsert_inventory_prices(rows):
     for i in range(0, len(rows), batch):
         client.table(table).upsert(rows[i:i + batch], on_conflict="codigo").execute()
     load_inventory.clear()
+
+
+def get_learned_matches(proveedor):
+    """{codigo_proveedor_normalizado: codigo_producto} aprendidos de correcciones
+    manuales anteriores para este proveedor."""
+    proveedor_norm = normalize(proveedor)
+    if not proveedor_norm:
+        return {}
+    res = (
+        _service_client()
+        .table("aprendizaje_matches")
+        .select("codigo_proveedor,codigo_producto")
+        .eq("proveedor", proveedor_norm)
+        .execute()
+    )
+    return {r["codigo_proveedor"]: r["codigo_producto"] for r in (res.data or [])}
+
+
+def save_learned_matches(proveedor, usuario_email, entries):
+    """entries: lista de (codigo_proveedor, codigo_producto) corregidos a mano."""
+    proveedor_norm = normalize(proveedor)
+    if not proveedor_norm or not entries:
+        return
+    rows = [
+        {
+            "proveedor": proveedor_norm,
+            "codigo_proveedor": normalize(cp),
+            "codigo_producto": cprod,
+            "usuario_email": usuario_email,
+        }
+        for cp, cprod in entries
+        if normalize(cp)
+    ]
+    if not rows:
+        return
+    _service_client().table("aprendizaje_matches").upsert(rows, on_conflict="proveedor,codigo_proveedor").execute()
 
 
 def log_factura(usuario_email, proveedor, numero_factura, fecha_factura, sede, total_lineas, lineas_sin_match):

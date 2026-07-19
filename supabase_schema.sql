@@ -48,3 +48,24 @@ create policy "usuarios autenticados pueden leer precios"
 on public.inventario_precios for select
 to authenticated
 using (true);
+
+-- Cada vez que un cajero corrige a mano el producto que sugirio la IA, se
+-- guarda aqui (proveedor + su codigo de producto -> nuestro codigo interno).
+-- La proxima factura del mismo proveedor usa esto primero, antes de adivinar
+-- de nuevo por parecido de texto.
+create table if not exists public.aprendizaje_matches (
+    proveedor text not null,
+    codigo_proveedor text not null,
+    codigo_producto text not null,
+    usuario_email text,
+    updated_at timestamptz not null default now(),
+    primary key (proveedor, codigo_proveedor)
+);
+
+alter table public.aprendizaje_matches enable row level security;
+
+create policy "usuarios autenticados pueden usar el aprendizaje"
+on public.aprendizaje_matches for all
+to authenticated
+using (true)
+with check (true);
