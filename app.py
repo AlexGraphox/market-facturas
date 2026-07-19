@@ -52,80 +52,56 @@ def alerts_for_row(costo, iva_pct, cantidad, valor_total, inv_item):
 def _finish_login(email, password):
     result = supa.sign_in(email, password)
     st.session_state.auth = {"email": result.user.email}
-    st.session_state.pop("login_stage", None)
-    st.session_state.pop("login_email", None)
     st.rerun()
 
 
 def login_screen():
     st.title("🧾 Facturas de proveedor — SM Market")
-    st.caption("Inicia sesión con tu correo autorizado.")
-    st.session_state.setdefault("login_stage", "email")
+    st.caption("Inicia sesión con tu correo autorizado. Si es tu primera vez, se crea la cuenta sola con la clave que escribas aquí.")
+    with st.form("login_form"):
+        email = st.text_input("Correo electrónico")
+        password = st.text_input("Clave", type="password")
+        submitted = st.form_submit_button("Entrar", type="primary")
+    if not submitted:
+        return
 
-    # Paso 1: pedir el correo primero (con boton, no reactivo por cada letra)
-    # para decidir si ya tiene cuenta, o si esta autorizado a crear una nueva.
-    if st.session_state.login_stage == "email":
-        with st.form("email_form"):
-            email = st.text_input("Correo electrónico")
-            submitted = st.form_submit_button("Continuar", type="primary")
-        if submitted:
-            email_clean = email.strip().lower()
-            if not email_clean:
-                st.error("Escribe tu correo.")
-            else:
-                st.session_state.login_email = email_clean
-                try:
-                    exists = supa.auth_user_exists(email_clean)
-                except Exception:
-                    exists = True  # no se pudo verificar -- se intenta el login normal igual
-                if exists:
-                    st.session_state.login_stage = "password"
-                elif supa.is_authorized_email(email_clean):
-                    st.session_state.login_stage = "create"
-                else:
-                    st.error("Este correo no está autorizado. Contacta a Alexander para que lo agregue.")
-                st.rerun()
+    email_clean = email.strip().lower()
+    if not email_clean or not password:
+        st.error("Escribe tu correo y una clave.")
+        return
 
-    # Paso 2a: ya tiene cuenta -- login normal.
-    elif st.session_state.login_stage == "password":
-        st.caption(f"Correo: **{st.session_state.login_email}**")
-        with st.form("password_form"):
-            password = st.text_input("Clave", type="password")
-            c1, c2 = st.columns(2)
-            submitted = c1.form_submit_button("Entrar", type="primary")
-            back = c2.form_submit_button("← Cambiar correo")
-        if back:
-            st.session_state.login_stage = "email"
-            st.rerun()
-        if submitted:
-            try:
-                _finish_login(st.session_state.login_email, password)
-            except Exception:
-                st.error("Clave incorrecta.")
+    # 1. Se intenta entrar directo -- cubre el caso normal (cuenta ya existe).
+    try:
+        _finish_login(email_clean, password)
+        return
+    except Exception:
+        pass  # puede ser clave incorrecta, o que la cuenta no existe todavia
 
-    # Paso 2b: correo autorizado pero sin cuenta todavia -- crearla aqui mismo.
-    elif st.session_state.login_stage == "create":
-        st.caption(f"Correo: **{st.session_state.login_email}** — autorizado, todavía sin clave.")
-        with st.form("create_form"):
-            p1 = st.text_input("Crea una clave", type="password")
-            p2 = st.text_input("Repite la clave", type="password")
-            c1, c2 = st.columns(2)
-            submitted = c1.form_submit_button("Crear clave y entrar", type="primary")
-            back = c2.form_submit_button("← Cambiar correo")
-        if back:
-            st.session_state.login_stage = "email"
-            st.rerun()
-        if submitted:
-            if len(p1) < 6:
-                st.error("La clave debe tener al menos 6 caracteres.")
-            elif p1 != p2:
-                st.error("Las claves no coinciden.")
-            else:
-                try:
-                    supa.create_user_with_password(st.session_state.login_email, p1)
-                    _finish_login(st.session_state.login_email, p1)
-                except Exception as e:
-                    st.error(f"No se pudo crear la cuenta: {e}")
+    # 2. Si falló, ¿esta autorizado a crear cuenta nueva?
+    try:
+        authorized = supa.is_authorized_email(email_clean)
+    except Exception as e:
+        st.error(f"No se pudo verificar el correo, intenta de nuevo: {e}")
+        return
+    if not authorized:
+        st.error("Correo o clave incorrectos, o el correo no está autorizado.")
+        return
+    if len(password) < 6:
+        st.error("Correo o clave incorrectos. Si es tu primera vez, la clave debe tener al menos 6 caracteres para crear la cuenta.")
+        return
+
+    # 3. Autorizado y sin sesión previa exitosa -- se intenta crear la cuenta
+    # con la misma clave que acaba de escribir. Si Supabase la rechaza porque
+    # el correo YA tiene cuenta, es que en realidad escribió mal la clave.
+    try:
+        supa.create_user_with_password(email_clean, password)
+        _finish_login(email_clean, password)
+    except Exception as e:
+        msg = str(e).lower()
+        if any(k in msg for k in ("already", "exists", "registered", "duplicate")):
+            st.error("Clave incorrecta.")
+        else:
+            st.error(f"No se pudo crear la cuenta: {e}")
 
 
 def main():
